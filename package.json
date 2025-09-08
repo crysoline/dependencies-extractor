@@ -1,5 +1,5 @@
 {
-  "name": "miruro_update",
+  "name": "dep",
   "module": "src/index.js",
   "type": "module",
   "devDependencies": {
