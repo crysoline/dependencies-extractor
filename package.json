@@ -1,6 +1,7 @@
 {
-  "name": "dep",
+  "name": "dep-ext101",
   "module": "src/index.js",
+  "version": "0.1.0",
   "type": "module",
   "main": "src/index.js",
   "devDependencies": {
