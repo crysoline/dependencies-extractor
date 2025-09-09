@@ -96,6 +96,33 @@ export function extractByNames(code: string, names: Array<string>, currentFilePa
  */
 export function createPattern(patternType: string, namePattern?: string): RegExp;
 /**
+ * Simple regex-based code extraction that finds containers and extracts with dependencies 🎯
+ * Finds ANY code pattern with regex, locates its container (function/class/method),
+ * then extracts that container with all dependencies!
+ * @param {string} code - Source code to search in
+ * @param {string|RegExp} pattern - Regex pattern to match ANY piece of code
+ * @param {boolean} [extractFull=true] - Whether to extract full declarations with dependencies
+ * @returns {Object} Extraction results with container and dependencies
+ */
+export function simpleRegexExtract(code: string, pattern: string | RegExp, extractFull?: boolean): Object;
+/**
+ * Just match stuff in code, no fancy parsing! 🌟
+ * @param {string} code - Source code to search
+ * @param {string|RegExp} pattern - Regex pattern to match
+ * @param {boolean} [extractFull=false] - Extract full declarations or just matches
+ * @returns {Object} Simple results
+ */
+export function justMatch(code: string, pattern: string | RegExp, extractFull?: boolean): Object;
+/**
+ * Find and extract with BOTH methods! Best of both worlds~ 🎭
+ * @param {string} code - The source code
+ * @param {string} pattern - Regex pattern
+ * @param {string} [method='simple'] - 'simple' for regex.match() or 'complex' for AST parsing
+ * @param {string} [currentFilePath] - File path for complex method
+ * @returns {Object} Results based on chosen method
+ */
+export function flexibleExtract(code: string, pattern: string, method?: string, currentFilePath?: string): Object;
+/**
  * Pretty print extraction results! 🎨
  * @param {ExtractionResult} result - The extraction result to print
  */
