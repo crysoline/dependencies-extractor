@@ -1136,6 +1136,201 @@ function printResults(result) {
 }
 
 /**
+ * Simple regex-based code extraction that finds containers and extracts with dependencies 🎯
+ * Finds ANY code pattern with regex, locates its container (function/class/method), 
+ * then extracts that container with all dependencies!
+ * @param {string} code - Source code to search in
+ * @param {string|RegExp} pattern - Regex pattern to match ANY piece of code
+ * @param {boolean} [extractFull=true] - Whether to extract full declarations with dependencies
+ * @returns {Object} Extraction results with container and dependencies
+ */
+function simpleRegexExtract(code, pattern, extractFull = true) {
+  logger.info("🎯 Starting simple regex extraction - find containers and extract with deps!");
+  
+  const regex = pattern instanceof RegExp ? pattern : new RegExp(pattern, 'gi');
+  
+  try {
+    const ast = parser.parse(code, {
+      sourceType: "module",
+      allowImportExportEverywhere: true,
+      allowReturnOutsideFunction: true,
+      plugins: [
+        "asyncGenerators",
+        "bigInt",
+        "classProperties",
+        "decorators-legacy",
+        "doExpressions",
+        "dynamicImport",
+        "exportDefaultFrom",
+        "exportNamespaceFrom",
+        "functionBind",
+        "functionSent",
+        "importMeta",
+        "nullishCoalescingOperator",
+        "numericSeparator",
+        "objectRestSpread",
+        "optionalCatchBinding",
+        "optionalChaining",
+        "throwExpressions",
+        "topLevelAwait",
+        "trailingFunctionCommas",
+      ],
+    });
+
+    const declarations = new Map();
+    const matchedContainers = new Set();
+    const matchDetails = [];
+
+    findAllDeclarations(ast, declarations, 'current', code);
+    
+    logger.debug(`Found ${declarations.size} total declarations`);
+
+    const matches = [];
+    let match;
+    regex.lastIndex = 0;
+    while ((match = regex.exec(code)) !== null) {
+      matches.push({
+        match: match[0],
+        index: match.index,
+        endIndex: match.index + match[0].length
+      });
+      if (!regex.global) break;
+    }
+
+    if (matches.length === 0) {
+      return {
+        success: false,
+        message: `No matches found for pattern: ${regex.source}`,
+        extractedCode: '',
+        containers: [],
+        matchDetails: [],
+        originalCodeLength: code.length,
+        extractedCodeLength: 0
+      };
+    }
+
+    logger.success(`🔍 Found ${matches.length} regex matches in code`);
+
+    matches.forEach((regexMatch, matchIndex) => {
+      logger.debug(`Processing match ${matchIndex + 1}: "${regexMatch.match}" at position ${regexMatch.index}`);
+      
+      let bestContainer = null;
+      let bestContainerName = null;
+
+      declarations.forEach((declaration, name) => {
+        const originalCode = declaration.originalCode || '';
+        
+        const declarationIndex = code.indexOf(originalCode);
+        if (declarationIndex !== -1) {
+          const declarationEnd = declarationIndex + originalCode.length;
+          
+          if (regexMatch.index >= declarationIndex && regexMatch.endIndex <= declarationEnd) {
+            logger.success(`🎯 Match "${regexMatch.match}" found inside: ${name} (${declaration.type})`);
+            
+            if (!bestContainer || (declaration.depth || 0) > (bestContainer.depth || 0)) {
+              bestContainer = declaration;
+              bestContainerName = name;
+            }
+          }
+        }
+      });
+
+      if (bestContainer) {
+        matchedContainers.add(bestContainerName);
+        
+        matchDetails.push({
+          match: regexMatch.match,
+          matchIndex: regexMatch.index,
+          containerName: bestContainerName,
+          containerType: bestContainer.type,
+          parentFunction: bestContainer.parentFunction || null,
+          className: bestContainer.className || null,
+          depth: bestContainer.depth || 0,
+          codeSnippet: bestContainer.originalCode.substring(0, 200) + 
+                      (bestContainer.originalCode.length > 200 ? '...' : '')
+        });
+      } else {
+        logger.info(`🌍 Match "${regexMatch.match}" found at top level`);
+        matchDetails.push({
+          match: regexMatch.match,
+          matchIndex: regexMatch.index,
+          containerName: 'top-level',
+          containerType: 'top-level',
+          parentFunction: null,
+          className: null,
+          depth: 0,
+          codeSnippet: regexMatch.match
+        });
+      }
+    });
+
+    if (matchedContainers.size === 0 && matchDetails.every(d => d.containerName === 'top-level')) {
+      const topLevelMatches = matchDetails.filter(d => d.containerName === 'top-level');
+      return {
+        success: true,
+        message: `Found ${topLevelMatches.length} top-level matches`,
+        extractedCode: topLevelMatches.map(d => d.match).join('\n'),
+        containers: ['top-level'],
+        matchDetails: matchDetails,
+        originalCodeLength: code.length,
+        extractedCodeLength: topLevelMatches.map(d => d.match).join('\n').length
+      };
+    }
+
+    if (!extractFull) {
+      const containerCodes = [];
+      matchedContainers.forEach(containerName => {
+        const declaration = declarations.get(containerName);
+        if (declaration) {
+          containerCodes.push(declaration.originalCode);
+        }
+      });
+      
+      const finalCode = containerCodes.join('\n\n');
+      
+      return {
+        success: true,
+        message: `Found ${matchedContainers.size} containers without dependencies`,
+        extractedCode: finalCode,
+        containers: Array.from(matchedContainers),
+        matchDetails: matchDetails,
+        originalCodeLength: code.length,
+        extractedCodeLength: finalCode.length
+      };
+    }
+
+    const containerNames = Array.from(matchedContainers);
+    logger.info(`🔄 Extracting containers with dependencies: ${containerNames.join(', ')}`);
+    
+    const fullExtractionResult = extractByNames(code, containerNames, 'current');
+    
+    return {
+      success: fullExtractionResult.success,
+      message: `Found ${matchedContainers.size} containers and extracted with dependencies`,
+      extractedCode: fullExtractionResult.finalCode,
+      containers: containerNames,
+      matchDetails: matchDetails,
+      dependencies: fullExtractionResult.metadata?.dependencies || [],
+      totalNodesIncluded: fullExtractionResult.metadata?.totalNodesIncluded || 0,
+      originalCodeLength: code.length,
+      extractedCodeLength: fullExtractionResult.finalCode.length
+    };
+
+  } catch (error) {
+    logger.error(`Failed to parse code: ${error.message}`);
+    return {
+      success: false,
+      message: `Parse error: ${error.message}`,
+      extractedCode: '',
+      containers: [],
+      matchDetails: [],
+      originalCodeLength: code.length,
+      extractedCodeLength: 0
+    };
+  }
+}
+
+/**
  * Just match stuff in code, no fancy parsing! 🌟
  * @param {string} code - Source code to search
  * @param {string|RegExp} pattern - Regex pattern to match
