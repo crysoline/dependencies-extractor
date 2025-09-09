@@ -7,9 +7,11 @@ const generate = require('@babel/generator').default;
 /**
  * @typedef {Object} DeclarationInfo
  * @property {Object} node - The AST node
- * @property {'function'|'variable'|'class'|'import'} type - Type of declaration
+ * @property {'function'|'variable'|'class'|'import'|'nested-function'} type - Type of declaration
  * @property {Object} path - The Babel path object
  * @property {string} [source] - For imports, track the source file path
+ * @property {string} [parentFunction] - For nested functions, track the parent function name
+ * @property {number} [depth] - Nesting depth for nested functions
  */
 
 /**
@@ -20,6 +22,7 @@ const generate = require('@babel/generator').default;
  * @property {Object} metadata - Additional metadata about the extraction
  * @property {string[]} metadata.resolvedImports - Successfully resolved import paths
  * @property {string[]} metadata.unresolvedImports - Import paths that couldn't be resolved
+ * @property {string[]} metadata.nestedFunctions - Found nested functions
  */
 
 /**
@@ -150,65 +153,7 @@ function parseFile(filePath) {
     
     const declarations = new Map();
     
-    traverse(ast, {
-      FunctionDeclaration(path) {
-        const name = path.node.id?.name;
-        if (name) {
-          declarations.set(name, {
-            node: path.node,
-            type: 'function',
-            path: path,
-            source: filePath
-          });
-        }
-      },
-      
-      VariableDeclarator(path) {
-        const name = path.node.id?.name;
-        if (name) {
-          declarations.set(name, {
-            node: path.parent,
-            type: 'variable',
-            path: path.parentPath,
-            source: filePath
-          });
-        }
-      },
-      
-      ClassDeclaration(path) {
-        const name = path.node.id?.name;
-        if (name) {
-          declarations.set(name, {
-            node: path.node,
-            type: 'class',
-            path: path,
-            source: filePath
-          });
-        }
-      },
-      
-      ExportNamedDeclaration(path) {
-        if (path.node.declaration) {
-          const declaration = path.node.declaration;
-          let name = null;
-          
-          if (declaration.type === 'FunctionDeclaration' || declaration.type === 'ClassDeclaration') {
-            name = declaration.id?.name;
-          } else if (declaration.type === 'VariableDeclaration') {
-            name = declaration.declarations[0]?.id?.name;
-          }
-          
-          if (name) {
-            declarations.set(name, {
-              node: declaration,
-              type: declaration.type.toLowerCase().replace('declaration', ''),
-              path: path,
-              source: filePath
-            });
-          }
-        }
-      }
-    });
+    findAllDeclarations(ast, declarations, filePath);
     
     return { ast, declarations };
   } catch (error) {
@@ -218,14 +163,233 @@ function parseFile(filePath) {
 }
 
 /**
+ * Finds all declarations including nested functions! So cute~ 🐱
+ * @param {Object} ast - The AST to traverse
+ * @param {Map<string, DeclarationInfo>} declarations - Map to store found declarations
+ * @param {string} filePath - Current file path
+ * @param {string} [parentFunction] - Parent function name for nested functions
+ * @param {number} [depth=0] - Current nesting depth
+ */
+function findAllDeclarations(ast, declarations, filePath, parentFunction, depth = 0) {
+  traverse(ast, {
+    FunctionDeclaration(path) {
+      const name = path.node.id?.name;
+      if (name) {
+        const declarationInfo = {
+          node: path.node,
+          type: parentFunction ? 'nested-function' : 'function',
+          path: path,
+          source: filePath
+        };
+        
+        if (parentFunction) {
+          declarationInfo.parentFunction = parentFunction;
+          declarationInfo.depth = depth;
+          logger.debug(`🪆 Found nested function: ${name} inside ${parentFunction} (depth: ${depth})`);
+        }
+        
+        declarations.set(name, declarationInfo);
+        
+        findNestedFunctionsInScope(path, declarations, filePath, name, depth + 1);
+      }
+    },
+    
+    VariableDeclarator(path) {
+      const name = path.node.id?.name;
+      if (name) {
+        const declarationInfo = {
+          node: path.parent,
+          type: 'variable',
+          path: path.parentPath,
+          source: filePath
+        };
+        
+        if (parentFunction) {
+          declarationInfo.parentFunction = parentFunction;
+          declarationInfo.depth = depth;
+        }
+        
+        declarations.set(name, declarationInfo);
+        
+        if (path.node.init && 
+            (path.node.init.type === 'FunctionExpression' || 
+             path.node.init.type === 'ArrowFunctionExpression')) {
+          logger.debug(`🎯 Found function expression: ${name}${parentFunction ? ` inside ${parentFunction}` : ''}`);
+          
+          if (path.node.init.type === 'FunctionExpression') {
+            findNestedFunctionsInExpression(path.get('init'), declarations, filePath, name, depth + 1);
+          }
+        }
+      }
+    },
+    
+    ClassDeclaration(path) {
+      const name = path.node.id?.name;
+      if (name) {
+        const declarationInfo = {
+          node: path.node,
+          type: 'class',
+          path: path,
+          source: filePath
+        };
+        
+        if (parentFunction) {
+          declarationInfo.parentFunction = parentFunction;
+          declarationInfo.depth = depth;
+        }
+        
+        declarations.set(name, declarationInfo);
+      }
+    },
+    
+    ExportNamedDeclaration(path) {
+      if (path.node.declaration) {
+        const declaration = path.node.declaration;
+        let name = null;
+        
+        if (declaration.type === 'FunctionDeclaration' || declaration.type === 'ClassDeclaration') {
+          name = declaration.id?.name || null;
+        } else if (declaration.type === 'VariableDeclaration') {
+          name = declaration.declarations[0]?.id?.name || null;
+        }
+        
+        if (name) {
+          const declarationInfo = {
+            node: declaration,
+            type: declaration.type.toLowerCase().replace('declaration', ''),
+            path: path,
+            source: filePath
+          };
+          
+          if (parentFunction) {
+            declarationInfo.parentFunction = parentFunction;
+            declarationInfo.depth = depth;
+          }
+          
+          declarations.set(name, declarationInfo);
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Finds nested functions within a function scope 🔍✨
+ * @param {Object} functionPath - The function path to search within
+ * @param {Map<string, DeclarationInfo>} declarations - Map to store found declarations
+ * @param {string} filePath - Current file path
+ * @param {string} parentName - Parent function name
+ * @param {number} depth - Current nesting depth
+ */
+function findNestedFunctionsInScope(functionPath, declarations, filePath, parentName, depth) {
+  functionPath.traverse({
+    FunctionDeclaration(path) {
+      if (path === functionPath) return;
+      
+      const name = path.node.id?.name;
+      if (name) {
+        logger.debug(`🪆 Found nested function declaration: ${name} inside ${parentName} (depth: ${depth})`);
+        
+        declarations.set(name, {
+          node: path.node,
+          type: 'nested-function',
+          path: path,
+          source: filePath,
+          parentFunction: parentName,
+          depth: depth
+        });
+        
+        findNestedFunctionsInScope(path, declarations, filePath, name, depth + 1);
+      }
+      
+      path.skip();
+    },
+    
+    VariableDeclarator(path) {
+      const name = path.node.id?.name;
+      if (name && path.node.init && 
+          (path.node.init.type === 'FunctionExpression' || 
+           path.node.init.type === 'ArrowFunctionExpression')) {
+        
+        logger.debug(`🏹 Found nested function expression: ${name} inside ${parentName} (depth: ${depth})`);
+        
+        declarations.set(name, {
+          node: path.parent,
+          type: 'nested-function',
+          path: path.parentPath,
+          source: filePath,
+          parentFunction: parentName,
+          depth: depth
+        });
+        
+        if (path.node.init.type === 'FunctionExpression') {
+          findNestedFunctionsInExpression(path.get('init'), declarations, filePath, name, depth + 1);
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Finds nested functions within a function expression 💝
+ * @param {Object} expressionPath - The expression path to search within
+ * @param {Map<string, DeclarationInfo>} declarations - Map to store found declarations
+ * @param {string} filePath - Current file path
+ * @param {string} parentName - Parent function name
+ * @param {number} depth - Current nesting depth
+ */
+function findNestedFunctionsInExpression(expressionPath, declarations, filePath, parentName, depth) {
+  expressionPath.traverse({
+    FunctionDeclaration(path) {
+      const name = path.node.id?.name;
+      if (name) {
+        logger.debug(`🎭 Found function declaration in expression: ${name} inside ${parentName} (depth: ${depth})`);
+        
+        declarations.set(name, {
+          node: path.node,
+          type: 'nested-function',
+          path: path,
+          source: filePath,
+          parentFunction: parentName,
+          depth: depth
+        });
+        
+        findNestedFunctionsInScope(path, declarations, filePath, name, depth + 1);
+      }
+      path.skip();
+    },
+    
+    VariableDeclarator(path) {
+      const name = path.node.id?.name;
+      if (name && path.node.init && 
+          (path.node.init.type === 'FunctionExpression' || 
+           path.node.init.type === 'ArrowFunctionExpression')) {
+        
+        logger.debug(`🌟 Found nested function expression in expression: ${name} inside ${parentName} (depth: ${depth})`);
+        
+        declarations.set(name, {
+          node: path.parent,
+          type: 'nested-function',
+          path: path.parentPath,
+          source: filePath,
+          parentFunction: parentName,
+          depth: depth
+        });
+      }
+    }
+  });
+}
+
+/**
  * Enhanced version that resolves imports and extracts their dependencies too! ✨
- * @param {string} sourceCode - The JavaScript source code to analyze
- * @param {RegExp} functionRegex - Regular expression to match function names
+ * Now with super cute nested function support! 🥰
+ * @param {string} sourceCode - The source code to parse
+ * @param {RegExp} functionRegex - Regex to match function names
  * @param {string} [currentFilePath] - Current file path for import resolution
- * @returns {Object} Result object containing extracted code and metadata
+ * @returns {ExtractionResult} The extraction result
  */
 function extractFunctionWithDependencies(sourceCode, functionRegex, currentFilePath = process.cwd() + '/main.js') {
-  logger.info('🚀 Starting enhanced function extraction with import resolution');
+  logger.info('🚀 Starting enhanced function extraction with nested function support!');
   
   let ast;
   try {
@@ -248,6 +412,7 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
   }
 
   const foundFunctions = new Set();
+  const nestedFunctions = new Set();
   const dependencies = new Set();
   const nodesToInclude = new Set();
   const resolvedImports = [];
@@ -255,43 +420,9 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
   
   const globalDeclarations = new Map();
   
+  findAllDeclarations(ast, globalDeclarations, currentFilePath);
+  
   traverse(ast, {
-    FunctionDeclaration(path) {
-      const name = path.node.id?.name;
-      if (name) {
-        globalDeclarations.set(name, {
-          node: path.node,
-          type: 'function',
-          path: path,
-          source: currentFilePath
-        });
-      }
-    },
-    
-    VariableDeclarator(path) {
-      const name = path.node.id?.name;
-      if (name) {
-        globalDeclarations.set(name, {
-          node: path.parent,
-          type: 'variable',
-          path: path.parentPath,
-          source: currentFilePath
-        });
-      }
-    },
-    
-    ClassDeclaration(path) {
-      const name = path.node.id?.name;
-      if (name) {
-        globalDeclarations.set(name, {
-          node: path.node,
-          type: 'class',
-          path: path,
-          source: currentFilePath
-        });
-      }
-    },
-
     ImportDeclaration(path) {
       const importPath = path.node.source.value;
       const resolvedPath = resolveImportPath(importPath, currentFilePath);
@@ -324,18 +455,27 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
     }
   });
 
-  logger.info(`Global declarations built: ${globalDeclarations.size} total`);
+  logger.info(`Global declarations built: ${globalDeclarations.size} total (including nested functions!)`);
   logger.info(`Resolved imports: ${resolvedImports.length}, Unresolved: ${unresolvedImports.length}`);
 
-  traverse(ast, {
-    FunctionDeclaration(path) {
-      const functionName = path.node.id?.name;
-      if (functionName && functionRegex.test(functionName)) {
-        logger.success(`🎯 Found target function: ${functionName}`);
-        foundFunctions.add(functionName);
-        nodesToInclude.add(path.node);
-        
-        findDependenciesInNode(path, dependencies, globalDeclarations);
+  globalDeclarations.forEach((declaration, name) => {
+    if (functionRegex.test(name)) {
+      logger.success(`🎯 Found matching function: ${name}${declaration.parentFunction ? ` (nested in ${declaration.parentFunction})` : ''}`);
+      foundFunctions.add(name);
+      
+      if (declaration.type === 'nested-function') {
+        nestedFunctions.add(name);
+        const parentDeclaration = globalDeclarations.get(declaration.parentFunction);
+        if (parentDeclaration) {
+          nodesToInclude.add(parentDeclaration.node);
+          logger.debug(`🔗 Including parent function: ${declaration.parentFunction}`);
+        }
+      }
+      
+      nodesToInclude.add(declaration.node);
+      
+      if (declaration.path) {
+        findDependenciesInNode(declaration.path, dependencies, globalDeclarations);
       }
     }
   });
@@ -351,6 +491,7 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
         totalNodesIncluded: 0,
         resolvedImports,
         unresolvedImports,
+        nestedFunctions: [],
         originalCodeLength: sourceCode.length,
         extractedCodeLength: 0
       }
@@ -370,6 +511,15 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
       const declaration = globalDeclarations.get(depName);
       if (declaration && declaration.type !== 'import') {
         nodesToInclude.add(declaration.node);
+        
+        if (declaration.type === 'nested-function' && declaration.parentFunction) {
+          const parentDeclaration = globalDeclarations.get(declaration.parentFunction);
+          if (parentDeclaration) {
+            nodesToInclude.add(parentDeclaration.node);
+            logger.debug(`🔗 Including parent for dependency: ${declaration.parentFunction}`);
+          }
+        }
+        
         if (declaration.path) {
           findDependenciesInNode(declaration.path, dependencies, globalDeclarations);
         }
@@ -410,10 +560,11 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
   }).code;
 
   logger.success(`🎉 Extraction completed! Generated ${finalCode.length} characters`);
+  logger.success(`Found ${nestedFunctions.size} nested functions! So cute~ 🥰`);
 
   return {
     success: true,
-    message: `Successfully extracted ${foundFunctions.size} function(s) with ${dependencies.size} dependencies`,
+    message: `Successfully extracted ${foundFunctions.size} function(s) (including ${nestedFunctions.size} nested) with ${dependencies.size} dependencies`,
     finalCode: finalCode,
     metadata: {
       foundFunctions: Array.from(foundFunctions),
@@ -421,6 +572,7 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
       totalNodesIncluded: finalNodes.length,
       resolvedImports,
       unresolvedImports,
+      nestedFunctions: Array.from(nestedFunctions),
       iterationsRequired: iterations,
       originalCodeLength: sourceCode.length,
       extractedCodeLength: finalCode.length
@@ -430,6 +582,9 @@ function extractFunctionWithDependencies(sourceCode, functionRegex, currentFileP
 
 /**
  * Recursively finds all dependencies within a given AST node
+ * @param {Object} path - The AST path to traverse
+ * @param {Set<string>} dependencies - Set to store found dependencies
+ * @param {Map<string, DeclarationInfo>} allDeclarations - All available declarations
  */
 function findDependenciesInNode(path, dependencies, allDeclarations) {
   path.traverse({
@@ -457,7 +612,11 @@ function findDependenciesInNode(path, dependencies, allDeclarations) {
 }
 
 /**
- * Convenience function with import resolution
+ * Convenience function with import resolution and nested function support! 💫
+ * @param {string} code - The source code to parse
+ * @param {string} regexPattern - Regular expression pattern to match function names
+ * @param {string} [currentFilePath] - Current file path for import resolution
+ * @returns {ExtractionResult} The extraction result
  */
 function findAndExtract(code, regexPattern, currentFilePath) {
   const regex = new RegExp(regexPattern);
