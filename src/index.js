@@ -1137,7 +1137,7 @@ function printResults(result) {
 
 /**
  * Simple regex-based code extraction that finds containers and extracts with dependencies 🎯
- * Finds ANY code pattern with regex, locates its container (function/class/method), 
+ * Finds ANY code pattern with regex, locates its container (function/class/method),
  * then extracts that container with all dependencies!
  * @param {string} code - Source code to search in
  * @param {string|RegExp} pattern - Regex pattern to match ANY piece of code
@@ -1145,10 +1145,12 @@ function printResults(result) {
  * @returns {Object} Extraction results with container and dependencies
  */
 function simpleRegexExtract(code, pattern, extractFull = true) {
-  logger.info("🎯 Starting simple regex extraction - find containers and extract with deps!");
-  
-  const regex = pattern instanceof RegExp ? pattern : new RegExp(pattern, 'gi');
-  
+  logger.info(
+    "🎯 Starting simple regex extraction - find containers and extract with deps!"
+  );
+
+  const regex = pattern instanceof RegExp ? pattern : new RegExp(pattern, "gi");
+
   try {
     const ast = parser.parse(code, {
       sourceType: "module",
@@ -1181,8 +1183,8 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
     const matchedContainers = new Set();
     const matchDetails = [];
 
-    findAllDeclarations(ast, declarations, 'current', code);
-    
+    findAllDeclarations(ast, declarations, "current", code);
+
     logger.debug(`Found ${declarations.size} total declarations`);
 
     const matches = [];
@@ -1192,7 +1194,7 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
       matches.push({
         match: match[0],
         index: match.index,
-        endIndex: match.index + match[0].length
+        endIndex: match.index + match[0].length,
       });
       if (!regex.global) break;
     }
@@ -1201,33 +1203,45 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
       return {
         success: false,
         message: `No matches found for pattern: ${regex.source}`,
-        extractedCode: '',
+        extractedCode: "",
         containers: [],
         matchDetails: [],
         originalCodeLength: code.length,
-        extractedCodeLength: 0
+        extractedCodeLength: 0,
       };
     }
 
     logger.success(`🔍 Found ${matches.length} regex matches in code`);
 
     matches.forEach((regexMatch, matchIndex) => {
-      logger.debug(`Processing match ${matchIndex + 1}: "${regexMatch.match}" at position ${regexMatch.index}`);
-      
+      logger.debug(
+        `Processing match ${matchIndex + 1}: "${
+          regexMatch.match
+        }" at position ${regexMatch.index}`
+      );
+
       let bestContainer = null;
       let bestContainerName = null;
 
       declarations.forEach((declaration, name) => {
-        const originalCode = declaration.originalCode || '';
-        
+        const originalCode = declaration.originalCode || "";
+
         const declarationIndex = code.indexOf(originalCode);
         if (declarationIndex !== -1) {
           const declarationEnd = declarationIndex + originalCode.length;
-          
-          if (regexMatch.index >= declarationIndex && regexMatch.endIndex <= declarationEnd) {
-            logger.success(`🎯 Match "${regexMatch.match}" found inside: ${name} (${declaration.type})`);
-            
-            if (!bestContainer || (declaration.depth || 0) > (bestContainer.depth || 0)) {
+
+          if (
+            regexMatch.index >= declarationIndex &&
+            regexMatch.endIndex <= declarationEnd
+          ) {
+            logger.success(
+              `🎯 Match "${regexMatch.match}" found inside: ${name} (${declaration.type})`
+            );
+
+            if (
+              !bestContainer ||
+              (declaration.depth || 0) > (bestContainer.depth || 0)
+            ) {
               bestContainer = declaration;
               bestContainerName = name;
             }
@@ -1237,7 +1251,7 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
 
       if (bestContainer) {
         matchedContainers.add(bestContainerName);
-        
+
         matchDetails.push({
           match: regexMatch.match,
           matchIndex: regexMatch.index,
@@ -1246,48 +1260,55 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
           parentFunction: bestContainer.parentFunction || null,
           className: bestContainer.className || null,
           depth: bestContainer.depth || 0,
-          codeSnippet: bestContainer.originalCode.substring(0, 200) + 
-                      (bestContainer.originalCode.length > 200 ? '...' : '')
+          codeSnippet:
+            bestContainer.originalCode.substring(0, 200) +
+            (bestContainer.originalCode.length > 200 ? "..." : ""),
         });
       } else {
         logger.info(`🌍 Match "${regexMatch.match}" found at top level`);
         matchDetails.push({
           match: regexMatch.match,
           matchIndex: regexMatch.index,
-          containerName: 'top-level',
-          containerType: 'top-level',
+          containerName: "top-level",
+          containerType: "top-level",
           parentFunction: null,
           className: null,
           depth: 0,
-          codeSnippet: regexMatch.match
+          codeSnippet: regexMatch.match,
         });
       }
     });
 
-    if (matchedContainers.size === 0 && matchDetails.every(d => d.containerName === 'top-level')) {
-      const topLevelMatches = matchDetails.filter(d => d.containerName === 'top-level');
+    if (
+      matchedContainers.size === 0 &&
+      matchDetails.every((d) => d.containerName === "top-level")
+    ) {
+      const topLevelMatches = matchDetails.filter(
+        (d) => d.containerName === "top-level"
+      );
       return {
         success: true,
         message: `Found ${topLevelMatches.length} top-level matches`,
-        extractedCode: topLevelMatches.map(d => d.match).join('\n'),
-        containers: ['top-level'],
+        extractedCode: topLevelMatches.map((d) => d.match).join("\n"),
+        containers: ["top-level"],
         matchDetails: matchDetails,
         originalCodeLength: code.length,
-        extractedCodeLength: topLevelMatches.map(d => d.match).join('\n').length
+        extractedCodeLength: topLevelMatches.map((d) => d.match).join("\n")
+          .length,
       };
     }
 
     if (!extractFull) {
       const containerCodes = [];
-      matchedContainers.forEach(containerName => {
+      matchedContainers.forEach((containerName) => {
         const declaration = declarations.get(containerName);
         if (declaration) {
           containerCodes.push(declaration.originalCode);
         }
       });
-      
-      const finalCode = containerCodes.join('\n\n');
-      
+
+      const finalCode = containerCodes.join("\n\n");
+
       return {
         success: true,
         message: `Found ${matchedContainers.size} containers without dependencies`,
@@ -1295,37 +1316,55 @@ function simpleRegexExtract(code, pattern, extractFull = true) {
         containers: Array.from(matchedContainers),
         matchDetails: matchDetails,
         originalCodeLength: code.length,
-        extractedCodeLength: finalCode.length
+        extractedCodeLength: finalCode.length,
       };
     }
 
     const containerNames = Array.from(matchedContainers);
-    logger.info(`🔄 Extracting containers with dependencies: ${containerNames.join(', ')}`);
-    
-    const fullExtractionResult = extractByNames(code, containerNames, 'current');
-    
+    logger.info(
+      `🔄 Extracting containers with dependencies: ${containerNames.join(", ")}`
+    );
+
+    const containerPattern = containerNames
+      .map((name) => `\\b${name}\\b`)
+      .join("|");
+    const containerRegex = new RegExp(containerPattern);
+
+    const fullExtractionResult = extractPatternWithDependencies(
+      code,
+      containerRegex,
+      "current"
+    );
+
+    logger.success(
+      `🎉 FULL CODE GENERATED! ${fullExtractionResult.finalCode.length} characters`
+    );
+
     return {
       success: fullExtractionResult.success,
-      message: `Found ${matchedContainers.size} containers and extracted with dependencies`,
+      message: `Found ${matchedContainers.size} containers and extracted with ALL dependencies`,
       extractedCode: fullExtractionResult.finalCode,
+      generatedCode: fullExtractionResult.finalCode,
       containers: containerNames,
       matchDetails: matchDetails,
       dependencies: fullExtractionResult.metadata?.dependencies || [],
-      totalNodesIncluded: fullExtractionResult.metadata?.totalNodesIncluded || 0,
+      resolvedImports: fullExtractionResult.metadata?.resolvedImports || [],
+      unresolvedImports: fullExtractionResult.metadata?.unresolvedImports || [],
+      totalNodesIncluded:
+        fullExtractionResult.metadata?.totalNodesIncluded || 0,
       originalCodeLength: code.length,
-      extractedCodeLength: fullExtractionResult.finalCode.length
+      extractedCodeLength: fullExtractionResult.finalCode.length,
     };
-
   } catch (error) {
     logger.error(`Failed to parse code: ${error.message}`);
     return {
       success: false,
       message: `Parse error: ${error.message}`,
-      extractedCode: '',
+      extractedCode: "",
       containers: [],
       matchDetails: [],
       originalCodeLength: code.length,
-      extractedCodeLength: 0
+      extractedCodeLength: 0,
     };
   }
 }
