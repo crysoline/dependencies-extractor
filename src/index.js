@@ -422,7 +422,7 @@ function findAllDeclarations(
       };
 
       declarations.set(name, declarationInfo);
-      declarations.set("default", declarationInfo); // Always add 'default' key
+      declarations.set("default", declarationInfo);
     },
   });
 }
@@ -1060,7 +1060,6 @@ function extractMultiplePatterns(code, regexPatterns, currentFilePath) {
 function extractByNames(code, names, currentFilePath) {
   logger.info(`💝 Extracting by exact names: ${names.join(", ")}`);
 
-  // Create a pattern that matches any of the names as complete words
   const namePattern = names.map((name) => `\\b${name}\\b`).join("|");
   const regex = new RegExp(namePattern);
 
@@ -1136,11 +1135,42 @@ function printResults(result) {
   console.log("=".repeat(60) + "\n");
 }
 
+/**
+ * Just match stuff in code, no fancy parsing! 🌟
+ * @param {string} code - Source code to search
+ * @param {string|RegExp} pattern - Regex pattern to match
+ * @param {boolean} [extractFull=false] - Extract full declarations or just matches
+ * @returns {Object} Simple results
+ */
+function justMatch(code, pattern, extractFull = false) {
+  return simpleRegexExtract(code, pattern, extractFull);
+}
+
+/**
+ * Find and extract with BOTH methods! Best of both worlds~ 🎭
+ * @param {string} code - The source code
+ * @param {string} pattern - Regex pattern
+ * @param {string} [method='simple'] - 'simple' for regex.match() or 'complex' for AST parsing
+ * @param {string} [currentFilePath] - File path for complex method
+ * @returns {Object} Results based on chosen method
+ */
+function flexibleExtract(code, pattern, method = "simple", currentFilePath) {
+  if (method === "simple") {
+    return simpleRegexExtract(code, pattern, true);
+  } else {
+    const regex = new RegExp(pattern);
+    return extractPatternWithDependencies(code, regex, currentFilePath);
+  }
+}
+
 module.exports = {
   extractPatternWithDependencies,
   findAndExtract,
   extractMultiplePatterns,
   extractByNames,
   createPattern,
+  simpleRegexExtract,
+  justMatch,
+  flexibleExtract,
   printResults,
 };
